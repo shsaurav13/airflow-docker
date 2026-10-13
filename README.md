@@ -60,6 +60,9 @@ flowchart LR
 | `airflow-triggerer` | custom | Runs deferrable (async) operators and sensors | Internal |
 | `airflow-worker` | custom | Celery workers that execute tasks. Scales horizontally | Internal |
 | `flower` *(profile `flower`)* | custom | Celery monitoring UI, behind basic auth | `127.0.0.1:5555` |
+| `kafka` | `apache/kafka:4.3.1` | News pipeline message broker (single node, KRaft). Keeps messages 72 h | Internal only |
+| `news-fetcher` | custom | News pipeline: always-on consumer that downloads article pages | Internal only |
+| `news-db` | `postgres:16` | News pipeline database, separate from the Airflow metadata DB | `127.0.0.1:5433` |
 | `airflow-cli` *(profile `debug`)* | custom | Runs one-off Airflow CLI commands | — |
 
 **custom** is the image built from this repo's `Dockerfile`: the official `apache/airflow:3.3.1-python3.12` image plus anything listed in `requirements.txt`.
@@ -87,7 +90,7 @@ Every service has a healthcheck and `restart: unless-stopped`. Compose won't sta
 - **Shared config.** Every Airflow service inherits the same image, environment and volumes from one YAML anchor (`x-airflow-common`), so their settings can't drift apart.
 - **Graceful shutdown.** Workers get a 5-minute `stop_grace_period`, so running tasks can finish on `docker compose stop`.
 - **Log rotation.** Container logs use `json-file` with a 20 MB × 5 file cap.
-- **Memory caps.** Each service has a memory limit. Together they add up to about 6.8 GB, which fits in an 8 GB Docker Desktop VM.
+- **Memory caps.** Each service has a memory limit. The caps add up to about 8.8 GB, but the whole stack actually uses about 2.4 GB, so an 8 GB Docker Desktop VM is fine. Give Docker 10 GB+ if you run heavy tasks.
 
 ---
 
@@ -132,7 +135,7 @@ Replace every `CHANGE_ME` value in `.env` with a generated secret:
 
 | Variable | Generate with |
 |---|---|
-| `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | `openssl rand -hex 24` |
+| `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `NEWS_DB_PASSWORD` | `openssl rand -hex 24` |
 | `AIRFLOW_FERNET_KEY` | `openssl rand -base64 32 \| tr '+/' '-_'` |
 | `AIRFLOW_API_SECRET_KEY`, `AIRFLOW_JWT_SECRET` | `openssl rand -hex 32` |
 | `AIRFLOW_ADMIN_PASSWORD` | `openssl rand -hex 12` |
