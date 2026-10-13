@@ -2,25 +2,14 @@
 
 ## What you get
 
-| Service | Role | Exposed |
-|---|---|---|
-| postgres 16 | Metadata DB + Celery result backend | internal only |
-| redis 7.2 | Celery broker (password + AOF persistence) | internal only |
-| airflow-init | One-shot: `db migrate` + admin user, then exits | none |
-| airflow-apiserver | UI + REST API + Execution API for tasks | 127.0.0.1:8080 |
-| airflow-scheduler | Schedules task instances, health on :8974 | internal |
-| airflow-dag-processor | Parses DAG files (separate process in Airflow 3) | internal |
-| airflow-triggerer | Runs deferrable operators | internal |
-| airflow-worker (x N) | Celery workers, 1 by default on a laptop | internal |
-| flower (profile) | Celery monitoring, basic auth | 127.0.0.1:5555 |
-| caddy (profile) | Reverse proxy with automatic HTTPS | 80 / 443 |
+See the [Architecture section in README.md](README.md#architecture) for the services and how they connect.
 
 Every service has a healthcheck, `restart: unless-stopped`, rotated logs, and secrets
 come only from `.env`. Compose refuses to start if a required secret is missing.
 
 ## Prerequisites (MacBook Pro 14 + Docker Desktop)
 - Docker Desktop 4.30+ (Compose v2 is bundled). `openssl` ships with macOS.
-- All images (apache/airflow, postgres, redis, caddy) are multi-arch, so they run natively
+- All images (apache/airflow, postgres, redis) are multi-arch, so they run natively
   on Apple Silicon (arm64) with no Rosetta emulation.
 - Docker Desktop > Settings > Resources:
   - **Memory: 8 GB** (minimum 6 GB; with 16 GB+ total RAM you can give 10 to 12 GB)
@@ -45,14 +34,14 @@ The memory caps in `.env` add up to about 6.8 GB, so heavy tasks have room insid
 ```bash
 cd airflow-docker
 bash scripts/gen-env.sh          # creates .env with random secrets, prints admin password
-# edit .env: AIRFLOW_BASE_URL, sizing, AIRFLOW_DOMAIN if using the proxy
+# edit .env: AIRFLOW_BASE_URL, sizing
 # add providers to requirements.txt if needed
 docker compose build
 docker compose up -d
 docker compose ps                # wait until everything says (healthy)
 ```
 Open http://localhost:8080 and log in as `admin` with the printed password.
-Unpause and trigger `smoke_test` to prove scheduler, workers and the Execution API work.
+Unpause and trigger `fibonacci` to prove scheduler, workers and the Execution API work.
 
 ## Day-2 operations
 | Task | Command |
@@ -61,7 +50,6 @@ Unpause and trigger `smoke_test` to prove scheduler, workers and the Execution A
 | Airflow CLI | `docker compose run --rm airflow-cli dags list` |
 | Tail logs | `docker compose logs -f airflow-scheduler` |
 | Flower | `docker compose --profile flower up -d` then http://localhost:5555 |
-| HTTPS (only when hosted on a server with a domain; skip on the laptop) | Set `AIRFLOW_DOMAIN` + `AIRFLOW_BASE_URL=https://<domain>`, then `docker compose --profile proxy up -d` |
 | Backup metadata DB | `bash scripts/backup-db.sh` (cron it daily; keeps 14) |
 | Restore | `docker compose exec -T postgres pg_restore -U airflow -d airflow --clean < backups/<file>.dump` |
 | Add a provider | Add to `requirements.txt`, `docker compose build && docker compose up -d` |
@@ -78,7 +66,7 @@ Unpause and trigger `smoke_test` to prove scheduler, workers and the Execution A
 - Turn on remote logging (S3/GCS block in `docker-compose.yaml`) so logs survive container and host loss.
 - Bake DAGs into the image (see Dockerfile comment) or sync them from git, instead of bind mounts.
 - Store connections/variables in a secrets backend (AWS Secrets Manager, Vault) rather than the metadata DB.
-- Keep the API bound to 127.0.0.1 and put TLS (Caddy profile or your LB) in front.
+- Keep the API bound to 127.0.0.1 and put a TLS proxy or LB in front.
 - Ship metrics: enable StatsD/OpenTelemetry (`AIRFLOW__METRICS__*`) to Prometheus/Grafana.
 
 ## Limits of this design

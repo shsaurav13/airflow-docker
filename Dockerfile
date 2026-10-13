@@ -13,9 +13,3 @@ RUN pip install --no-cache-dir \
       "apache-airflow==${AIRFLOW_VERSION}" \
       -r /requirements.txt \
       --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt"
-
-# Optional, recommended for real prod: bake DAGs and plugins into the image so
-# every container runs identical code. Then remove the dags/plugins bind mounts
-# in docker-compose.yaml.
-# COPY --chown=airflow:root dags/ /opt/airflow/dags/
-# COPY --chown=airflow:root plugins/ /opt/airflow/plugins/

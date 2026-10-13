@@ -2,7 +2,7 @@
 # Defaults are sized for a MacBook (Apple Silicon or Intel) running Docker Desktop with 8 GB.
 # All images used are multi-arch and run natively on arm64.
 # Services: postgres, redis, airflow-init, api-server, scheduler, dag-processor,
-#           triggerer, worker (scalable), plus optional flower and caddy (TLS proxy).
+#           triggerer, worker (scalable), plus optional flower.
 # All secrets come from .env (generate with ./scripts/gen-env.sh). Compose refuses
 # to start if a required secret is missing.
 
@@ -51,10 +51,6 @@ x-airflow-common: &airflow-common
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     # --- pick up new DAG files every 30s (default 300s) ---
     AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "30"
-    # --- remote logging (recommended for prod; uncomment + add provider to requirements.txt) ---
-    # AIRFLOW__LOGGING__REMOTE_LOGGING: "true"
-    # AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: s3://my-bucket/airflow/logs
-    # AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: aws_default
   volumes:
     - ./dags:/opt/airflow/dags:ro
     - ./plugins:/opt/airflow/plugins:ro
@@ -251,25 +247,6 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
-  # --- optional: `docker compose --profile proxy up -d` (auto HTTPS via Let's Encrypt) ---
-  caddy:
-    image: caddy:2
-    profiles: [proxy]
-    environment:
-      AIRFLOW_DOMAIN: ${AIRFLOW_DOMAIN:-localhost}
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-    logging: *default-logging
-    networks: [airflow]
-    restart: unless-stopped
-    depends_on:
-      airflow-apiserver:
-        condition: service_healthy
-
   # --- one-off CLI: `docker compose run --rm airflow-cli dags list` ---
   airflow-cli:
     <<: *airflow-common
@@ -289,5 +266,4 @@ volumes:
   postgres-data:
   redis-data:
   airflow-logs:
-  caddy-data:
 

@@ -10,12 +10,9 @@ The defaults are sized for a MacBook running Docker Desktop with 8 GB of memory,
 
 ```mermaid
 flowchart LR
-    user([User / Browser]) -->|HTTPS 443| caddy
     user -->|http://localhost:8080| api
 
     subgraph host[Docker host - network: airflow]
-        caddy["Caddy<br/>(optional TLS proxy)"] --> api
-
         api["API Server<br/>UI + REST API + Execution API"]
         sched[Scheduler]
         dagp[DAG Processor]
@@ -63,7 +60,6 @@ flowchart LR
 | `airflow-triggerer` | custom | Runs deferrable (async) operators and sensors | Internal |
 | `airflow-worker` | custom | Celery workers that execute tasks. Scales horizontally | Internal |
 | `flower` *(profile `flower`)* | custom | Celery monitoring UI, behind basic auth | `127.0.0.1:5555` |
-| `caddy` *(profile `proxy`)* | `caddy:2` | Reverse proxy with automatic HTTPS from Let's Encrypt | `80`, `443` |
 | `airflow-cli` *(profile `debug`)* | custom | Runs one-off Airflow CLI commands | — |
 
 **custom** is the image built from this repo's `Dockerfile`: the official `apache/airflow:3.3.1-python3.12` image plus anything listed in `requirements.txt`.
@@ -79,7 +75,6 @@ flowchart LR
     init -->|completed| dagp[dag-processor]
     init -->|completed| trig[triggerer]
     api -->|healthy| worker[worker]
-    api -->|healthy| caddy[caddy]
 ```
 
 Every service has a healthcheck and `restart: unless-stopped`. Compose won't start a service until the services it depends on are healthy, or, for `airflow-init`, have finished successfully.
@@ -88,7 +83,7 @@ Every service has a healthcheck and `restart: unless-stopped`. Compose won't sta
 
 - **Dependencies are installed at build time.** Providers in `requirements.txt` are installed in the `Dockerfile` against Airflow's official constraints file. Nothing is pip-installed when a container starts.
 - **Secrets live only in `.env`.** Compose uses `${VAR:?}` for every secret, so it refuses to start if one is missing. `.env` is gitignored.
-- **Network isolation.** PostgreSQL and Redis have no published ports. The UI listens only on `127.0.0.1`; to expose it publicly, put Caddy or your own load balancer in front.
+- **Network isolation.** PostgreSQL and Redis have no published ports. The UI listens only on `127.0.0.1`; to expose it publicly, put a TLS proxy or load balancer in front.
 - **Shared config.** Every Airflow service inherits the same image, environment and volumes from one YAML anchor (`x-airflow-common`), so their settings can't drift apart.
 - **Graceful shutdown.** Workers get a 5-minute `stop_grace_period`, so running tasks can finish on `docker compose stop`.
 - **Log rotation.** Container logs use `json-file` with a 20 MB × 5 file cap.
@@ -104,14 +99,12 @@ airflow-docker/
 ├── docker-compose.yaml   # All services, networks, volumes
 ├── requirements.txt      # Extra providers / Python libs baked into the image
 ├── .env.example          # Template for .env (all config + secrets)
-├── caddy/Caddyfile       # Reverse-proxy config for the `proxy` profile
 ├── dags/                 # Your DAGs (mounted read-only into containers)
 │   ├── fibonacci.py          # Param-driven example: prints the first n Fibonacci numbers
 │   ├── edge_extract_print.py # Fetches JSON over HTTP and summarizes it
 │   └── celery_demo.py        # Fans out 10 tasks to show distribution across workers
 ├── plugins/              # Airflow plugins (mounted read-only)
 ├── config/               # Optional airflow.cfg overrides
-├── HOW-TO.md             # Step-by-step explanation of how this stack was built
 └── RUNBOOK.md            # Operations guide: sizing, backups, upgrades, troubleshooting
 ```
 
@@ -174,13 +167,12 @@ DAGs start paused. Unpause one, such as `fibonacci`, and trigger it.
 | Run an Airflow CLI command | `docker compose run --rm airflow-cli dags list` |
 | Tail logs | `docker compose logs -f airflow-scheduler` |
 | Start Flower | `docker compose --profile flower up -d` then open http://localhost:5555 |
-| Enable HTTPS (server with a domain) | Set `AIRFLOW_DOMAIN` and `AIRFLOW_BASE_URL=https://<domain>`, then `docker compose --profile proxy up -d` |
 | Add a provider | Add it to `requirements.txt`, then `docker compose build && docker compose up -d` |
 | Back up the metadata DB | `docker compose exec -T postgres pg_dump -U airflow -d airflow -Fc > backups/airflow.dump` |
 | Stop (running tasks finish) | `docker compose stop` |
 | Upgrade Airflow | Back up the DB, change `AIRFLOW_VERSION` in `.env`, then `docker compose build && docker compose up -d` |
 
-See [RUNBOOK.md](RUNBOOK.md) for sizing, restores, the hardening checklist and troubleshooting, and [HOW-TO.md](HOW-TO.md) for a step-by-step explanation of how the stack is built.
+See [RUNBOOK.md](RUNBOOK.md) for sizing, restores, the hardening checklist and troubleshooting.
 
 ---
 
