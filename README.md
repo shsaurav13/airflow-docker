@@ -105,6 +105,7 @@ airflow-docker/
 │   ├── celery_demo.py        # Fans out 10 tasks to show distribution across workers
 │   ├── news_pipeline.py      # News DAGs: news_poll (RSS -> Kafka) and news_load (Kafka -> Postgres)
 │   ├── news_fetcher.py       # Always-on Kafka consumer that downloads article pages
+│   ├── news_sources.py       # News sources: add a site, or a new kind of source (e.g. a crawler)
 │   └── news_lib.py           # Shared topic / table setup for the news pipeline
 ├── plugins/              # Airflow plugins (mounted read-only)
 ├── config/               # Optional airflow.cfg overrides
@@ -164,24 +165,25 @@ DAGs start paused. Unpause one, such as `fibonacci`, and trigger it.
 
 ## News pipeline
 
-A streaming pipeline that ingests news from 10 RSS feeds through **Kafka** into Postgres.
+A streaming pipeline that ingests news from 10 RSS feeds through **Kafka** into its own Postgres database (`news-db`), fully separate from the Airflow metadata database.
 
 ```mermaid
 flowchart LR
-    feeds([RSS feeds]) --> poll["news_poll DAG<br/>every 10 min"]
+    feeds([RSS feeds]) --> poll["news_poll DAG<br/>hourly"]
     poll -->|new links only| raw[["Kafka: news.raw"]]
     raw --> fetcher["news-fetcher<br/>(always on)"]
     fetcher -->|download + extract text| sites([News websites])
     fetcher --> articles[["Kafka: news.articles"]]
     fetcher -->|blocked / failed 3x| dead[["Kafka: news.dead"]]
-    articles --> load["news_load DAG<br/>every 10 min"]
-    load -->|dedupe + bulk insert| pg[("Postgres<br/>news.articles")]
+    articles --> load["news_load DAG<br/>hourly"]
+    load -->|dedupe + bulk insert| pg[("news-db<br/>articles")]
 ```
 
 | Piece | What it does |
 |---|---|
 | `kafka` | Single-node Kafka 4.3 (KRaft, no ZooKeeper). Keeps messages 72 h. Only reachable inside Docker. |
-| `news_poll` | Reads the feeds, skips URLs already in `news.seen_urls`, sends new links to `news.raw`. |
+| `news-db` | Postgres 16 holding only news data: tables `articles` and `seen_urls`. Open on `localhost:5433` for DB tools like DBeaver (database `news`, user `news`, password `NEWS_DB_PASSWORD` in `.env`). |
+| `news_poll` | One task per source in `dags/news_sources.py`. Reads the feeds, skips URLs already in `seen_urls`, sends new links to `news.raw`. |
 | `news-fetcher` | Consumer group `news-fetcher`. Obeys `robots.txt`, waits 3 s between requests to the same site, retries 3 times, then parks the link in `news.dead`. |
 | `news_load` | Consumer group `news-loader`. Reads everything new in `news.articles` and inserts it. Duplicates (same URL or same headline) are dropped by unique constraints. |
 
@@ -193,10 +195,10 @@ Turn it on: unpause `news_poll` and `news_load` in the UI. Then:
 docker compose logs -f news-fetcher
 ```
 ```bash
-docker compose exec postgres psql -U airflow -c "SELECT source, count(*) FROM news.articles GROUP BY 1"
+docker compose exec news-db psql -U news -c "SELECT source, count(*) FROM articles GROUP BY 1"
 ```
 ```bash
-docker compose exec postgres psql -U airflow -c "SELECT title FROM news.articles WHERE search @@ to_tsquery('english', 'election') LIMIT 10"
+docker compose exec news-db psql -U news -c "SELECT title FROM articles WHERE search @@ to_tsquery('english', 'election') LIMIT 10"
 ```
 ```bash
 docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --all-groups

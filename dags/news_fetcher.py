@@ -53,12 +53,23 @@ def process(item: dict) -> tuple[str, dict]:
     error = ""
     for attempt in range(1, TRIES + 1):
         try:
-            body = trafilatura.extract(download(item["url"]))
-            return news_lib.ARTICLES, {**item, "body": body}  # body None = page had no extractable text
+            doc = trafilatura.bare_extraction(download(item["url"]), url=item["url"], with_metadata=True)
+            break
         except Exception as e:
             error = f"{type(e).__name__}: {e}"
             time.sleep(2 ** attempt)
-    return news_lib.DEAD, {**item, "reason": error[:300]}
+    else:
+        return news_lib.DEAD, {**item, "reason": error[:300]}
+    # Links from RSS come with a title; links from a crawler may not, so take it from the page.
+    title = item.get("title") or (doc and doc.title)
+    if not title:
+        return news_lib.DEAD, {**item, "reason": "no title found on page"}
+    return news_lib.ARTICLES, {
+        **item,
+        "title": title,
+        "published_at": item.get("published_at") or (doc and doc.date),
+        "body": doc and doc.text,  # None = page had no extractable text
+    }
 
 
 def main():
@@ -71,12 +82,18 @@ def main():
         m = c.poll(5)
         if m is None or m.error():
             continue
-        item = json.loads(m.value())
-        topic, msg = process(item)
-        producer.produce(topic, key=item["source"], value=json.dumps(msg))
+        try:
+            topic, msg = process(json.loads(m.value()))
+        except Exception as e:
+            # Poison message (bad JSON, missing url, ...): park it in news.dead. Crashing here would
+            # restart, re-read the same message and crash again forever, stalling the whole pipeline.
+            topic, msg = news_lib.DEAD, {"raw": m.value().decode(errors="replace")[:2000],
+                                         "reason": f"bad message: {type(e).__name__}: {e}"}
+        producer.produce(topic, key=m.key(), value=json.dumps(msg))
         producer.flush()
         c.commit(m, asynchronous=False)  # move the bookmark only after the result is safely in Kafka
-        print(f"{'OK  ' if topic == news_lib.ARTICLES else 'DEAD'} {item['source']}: {item['title'][:80]}", flush=True)
+        label = msg.get("title") or msg.get("url") or msg["reason"]
+        print(f"{'OK  ' if topic == news_lib.ARTICLES else 'DEAD'} {msg.get('source', '?')}: {label[:80]}", flush=True)
 
 
 if __name__ == "__main__":

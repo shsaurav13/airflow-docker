@@ -10,14 +10,13 @@ DB_URL = os.environ["NEWS_DB_URL"]
 
 RAW, ARTICLES, DEAD = "news.raw", "news.articles", "news.dead"
 
-# ponytail: news tables live in a `news` schema of the Airflow metadata DB; move to their own DB when real.
+# Tables live in their own database (news-db container), never in the Airflow metadata DB.
 DDL = """
-CREATE SCHEMA IF NOT EXISTS news;
-CREATE TABLE IF NOT EXISTS news.seen_urls (
+CREATE TABLE IF NOT EXISTS seen_urls (
     url        text PRIMARY KEY,
     first_seen timestamptz NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS news.articles (
+CREATE TABLE IF NOT EXISTS articles (
     id           bigserial PRIMARY KEY,
     url          text UNIQUE NOT NULL,
     title_key    text UNIQUE NOT NULL,   -- same headline from two feeds = one story
@@ -29,7 +28,7 @@ CREATE TABLE IF NOT EXISTS news.articles (
     search       tsvector GENERATED ALWAYS AS (
                    to_tsvector('english', title || ' ' || coalesce(body, ''))) STORED
 );
-CREATE INDEX IF NOT EXISTS articles_search_idx ON news.articles USING gin (search);
+CREATE INDEX IF NOT EXISTS articles_search_idx ON articles USING gin (search);
 """
 
 

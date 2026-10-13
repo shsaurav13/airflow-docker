@@ -53,7 +53,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "30"
     # --- news pipeline ---
     KAFKA_BOOTSTRAP: kafka:9092
-    NEWS_DB_URL: postgresql://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-airflow}
+    NEWS_DB_URL: postgresql://${NEWS_DB_USER:-news}:${NEWS_DB_PASSWORD:?set NEWS_DB_PASSWORD}@news-db:5432/${NEWS_DB_NAME:-news}
   volumes:
     - ./dags:/opt/airflow/dags:ro
     - ./plugins:/opt/airflow/plugins:ro
@@ -73,6 +73,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-airflow}
     command: ["postgres", "-c", "max_connections=150", "-c", "shared_buffers=128MB"]
+    # No published port: only reachable on the internal network.
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -89,7 +90,6 @@ services:
     logging: *default-logging
     networks: [airflow]
     restart: unless-stopped
-    # No published port: only reachable on the internal network.
 
   redis:
     # 7.2 is the last BSD-licensed Redis line; swap for valkey/valkey:8 if you prefer.
@@ -250,6 +250,32 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # --- news pipeline: its own Postgres, separate from the Airflow metadata DB ---
+  news-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${NEWS_DB_USER:-news}
+      POSTGRES_PASSWORD: ${NEWS_DB_PASSWORD:?set NEWS_DB_PASSWORD}
+      POSTGRES_DB: ${NEWS_DB_NAME:-news}
+    # Localhost only, for DB tools like DBeaver. Never reachable from other machines.
+    ports:
+      - "127.0.0.1:${NEWS_DB_PORT:-5433}:5432"
+    volumes:
+      - news-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: ${NEWS_DB_MEM_LIMIT:-512m}
+    logging: *default-logging
+    networks: [airflow]
+    restart: unless-stopped
+
   # --- news pipeline: Kafka broker (single node, KRaft, no ZooKeeper) ---
   kafka:
     image: apache/kafka:4.3.1
@@ -295,6 +321,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      news-db:
+        condition: service_healthy
 
   # --- one-off CLI: `docker compose run --rm airflow-cli dags list` ---
   airflow-cli:
@@ -316,4 +344,5 @@ volumes:
   redis-data:
   airflow-logs:
   kafka-data:
+  news-db-data:
 
