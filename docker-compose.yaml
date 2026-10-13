@@ -51,6 +51,9 @@ x-airflow-common: &airflow-common
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     # --- pick up new DAG files every 30s (default 300s) ---
     AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "30"
+    # --- news pipeline ---
+    KAFKA_BOOTSTRAP: kafka:9092
+    NEWS_DB_URL: postgresql://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-airflow}
   volumes:
     - ./dags:/opt/airflow/dags:ro
     - ./plugins:/opt/airflow/plugins:ro
@@ -247,6 +250,52 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # --- news pipeline: Kafka broker (single node, KRaft, no ZooKeeper) ---
+  kafka:
+    image: apache/kafka:4.3.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_LOG_RETENTION_HOURS: 72
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: ${KAFKA_MEM_LIMIT:-1g}
+    logging: *default-logging
+    networks: [airflow]
+    restart: unless-stopped
+
+  # --- news pipeline: always-on consumer, news.raw -> download page -> news.articles ---
+  news-fetcher:
+    <<: *airflow-common
+    entrypoint: ["python", "/opt/airflow/dags/news_fetcher.py"]
+    deploy:
+      resources:
+        limits:
+          memory: ${NEWS_FETCHER_MEM_LIMIT:-512m}
+    depends_on:
+      kafka:
+        condition: service_healthy
+
   # --- one-off CLI: `docker compose run --rm airflow-cli dags list` ---
   airflow-cli:
     <<: *airflow-common
@@ -266,4 +315,5 @@ volumes:
   postgres-data:
   redis-data:
   airflow-logs:
+  kafka-data:
 

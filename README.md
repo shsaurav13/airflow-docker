@@ -102,7 +102,10 @@ airflow-docker/
 ├── dags/                 # Your DAGs (mounted read-only into containers)
 │   ├── fibonacci.py          # Param-driven example: prints the first n Fibonacci numbers
 │   ├── edge_extract_print.py # Fetches JSON over HTTP and summarizes it
-│   └── celery_demo.py        # Fans out 10 tasks to show distribution across workers
+│   ├── celery_demo.py        # Fans out 10 tasks to show distribution across workers
+│   ├── news_pipeline.py      # News DAGs: news_poll (RSS -> Kafka) and news_load (Kafka -> Postgres)
+│   ├── news_fetcher.py       # Always-on Kafka consumer that downloads article pages
+│   └── news_lib.py           # Shared topic / table setup for the news pipeline
 ├── plugins/              # Airflow plugins (mounted read-only)
 ├── config/               # Optional airflow.cfg overrides
 └── RUNBOOK.md            # Operations guide: sizing, backups, upgrades, troubleshooting
@@ -156,6 +159,50 @@ Wait until every service shows `(healthy)`. `airflow-init` should show `Exited (
 
 Open **http://localhost:8080** and sign in as `admin` with the `AIRFLOW_ADMIN_PASSWORD` from `.env`.
 DAGs start paused. Unpause one, such as `fibonacci`, and trigger it.
+
+---
+
+## News pipeline
+
+A streaming pipeline that ingests news from 10 RSS feeds through **Kafka** into Postgres.
+
+```mermaid
+flowchart LR
+    feeds([RSS feeds]) --> poll["news_poll DAG<br/>every 10 min"]
+    poll -->|new links only| raw[["Kafka: news.raw"]]
+    raw --> fetcher["news-fetcher<br/>(always on)"]
+    fetcher -->|download + extract text| sites([News websites])
+    fetcher --> articles[["Kafka: news.articles"]]
+    fetcher -->|blocked / failed 3x| dead[["Kafka: news.dead"]]
+    articles --> load["news_load DAG<br/>every 10 min"]
+    load -->|dedupe + bulk insert| pg[("Postgres<br/>news.articles")]
+```
+
+| Piece | What it does |
+|---|---|
+| `kafka` | Single-node Kafka 4.3 (KRaft, no ZooKeeper). Keeps messages 72 h. Only reachable inside Docker. |
+| `news_poll` | Reads the feeds, skips URLs already in `news.seen_urls`, sends new links to `news.raw`. |
+| `news-fetcher` | Consumer group `news-fetcher`. Obeys `robots.txt`, waits 3 s between requests to the same site, retries 3 times, then parks the link in `news.dead`. |
+| `news_load` | Consumer group `news-loader`. Reads everything new in `news.articles` and inserts it. Duplicates (same URL or same headline) are dropped by unique constraints. |
+
+**No data is lost on a crash.** Every step saves its Kafka position (offset) only after its output is safely stored, so a restart re-reads instead of skipping.
+
+Turn it on: unpause `news_poll` and `news_load` in the UI. Then:
+
+```bash
+docker compose logs -f news-fetcher
+```
+```bash
+docker compose exec postgres psql -U airflow -c "SELECT source, count(*) FROM news.articles GROUP BY 1"
+```
+```bash
+docker compose exec postgres psql -U airflow -c "SELECT title FROM news.articles WHERE search @@ to_tsquery('english', 'election') LIMIT 10"
+```
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --all-groups
+```
+
+The last command shows each consumer group's position and lag (messages still waiting) per partition.
 
 ---
 

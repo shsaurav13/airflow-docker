@@ -6,3 +6,8 @@
 # apache-airflow-providers-snowflake
 # apache-airflow-providers-databricks
 # apache-airflow-providers-postgres
+
+# News pipeline
+confluent-kafka
+feedparser
+trafilatura
