@@ -1,0 +1,8 @@
+# Extra providers and libraries baked into the image.
+# Versions are resolved against the Airflow constraints file in the Dockerfile.
+# Examples (uncomment what you need):
+# apache-airflow-providers-amazon
+# apache-airflow-providers-google
+# apache-airflow-providers-snowflake
+# apache-airflow-providers-databricks
+# apache-airflow-providers-postgres
