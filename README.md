@@ -169,7 +169,7 @@ A streaming pipeline that ingests news from 10 RSS feeds through **Kafka** into 
 
 ```mermaid
 flowchart LR
-    feeds([RSS feeds]) --> poll["news_poll DAG<br/>hourly"]
+    feeds([RSS feeds]) --> poll["news_poll DAG<br/>every 10 min"]
     poll -->|new links only| raw[["Kafka: news.raw"]]
     raw --> fetcher["news-fetcher<br/>(always on)"]
     fetcher -->|download + extract text| sites([News websites])

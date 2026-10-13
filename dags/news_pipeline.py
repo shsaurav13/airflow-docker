@@ -1,6 +1,6 @@
 """News pipeline, Airflow side.
 
-news_poll: hourly, one task per source (news_sources.py) sends links we have never seen to Kafka `news.raw`.
+news_poll: every 10 min, one task per source (news_sources.py) sends links we have never seen to Kafka `news.raw`.
 news_load: hourly, read new messages from Kafka `news.articles` and bulk-insert into Postgres.
 The always-on fetcher (news_fetcher.py) sits between the two topics and downloads the pages.
 """
@@ -17,7 +17,7 @@ DEFAULTS = {"retries": 2, "retry_delay": timedelta(minutes=1)}
 MAX_ROWS_PER_LOAD = 5000  # bounds worker memory; after an outage the backlog drains over several runs
 
 
-@dag(schedule="@hourly", start_date=datetime(2026, 1, 1), catchup=False, max_active_runs=1,
+@dag(schedule=timedelta(minutes=10), start_date=datetime(2026, 1, 1), catchup=False, max_active_runs=1,
      default_args=DEFAULTS, tags=["news"])
 def news_poll():
     @task
